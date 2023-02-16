@@ -1,11 +1,9 @@
 use std::{
     borrow::Borrow,
-    collections::hash_map,
-    hash::{Hash, Hasher},
+    collections::{hash_map, HashMap},
+    hash::Hash,
     ops::Index,
 };
-
-use nohash_hasher::IntMap;
 
 use crate::Dual;
 
@@ -17,18 +15,42 @@ use crate::Dual;
 /// key in a way that changes its hash is *not* a logic error. The item's place in the
 /// set will be updated to reflect the new key.
 #[derive(Clone)]
-pub struct DualHashSet<T>(IntMap<u64, T>);
+pub struct DualHashSet<T: Dual>(HashMap<T::Key, T>);
 
-impl<T> Default for DualHashSet<T> {
+impl<T: Dual> Default for DualHashSet<T> {
     fn default() -> Self {
-        Self(IntMap::default())
+        Self(HashMap::default())
     }
 }
 
-impl<T> DualHashSet<T> {
+impl<T: Dual> DualHashSet<T> {
     /// Create a new set
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Remove a value from the set
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<T>
+    where
+        Q: Hash + Eq + ?Sized,
+        T::Key: Hash + Borrow<Q>,
+    {
+        self.0.remove(key)
+    }
+    /// Check if the set contains a value with the given key
+    pub fn contains<Q>(&self, key: &Q) -> bool
+    where
+        Q: Hash + Eq + ?Sized,
+        T::Key: Hash + Borrow<Q>,
+    {
+        self.0.contains_key(key)
+    }
+    /// Get a value from the set
+    pub fn get<Q>(&self, key: &Q) -> Option<&T>
+    where
+        Q: Hash + Eq + ?Sized,
+        T::Key: Hash + Borrow<Q>,
+    {
+        self.0.get(key)
     }
     /// Get an iterator over the keys
     pub fn keys(&self) -> Keys<T> {
@@ -40,36 +62,6 @@ impl<T> DualHashSet<T> {
     }
 }
 
-impl<T: Dual> DualHashSet<T> {
-    /// Remove a value from the set
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<T>
-    where
-        Q: Hash + Eq + ?Sized,
-        T::Key: Borrow<Q>,
-    {
-        let key = hash(key);
-        self.0.remove(&key)
-    }
-    /// Check if the set contains a value with the given key
-    pub fn contains<Q>(&self, key: &Q) -> bool
-    where
-        Q: Hash + Eq + ?Sized,
-        T::Key: Borrow<Q>,
-    {
-        let key = hash(key);
-        self.0.contains_key(&key)
-    }
-    /// Get a value from the set
-    pub fn get<Q>(&self, key: &Q) -> Option<&T>
-    where
-        Q: Hash + Eq + ?Sized,
-        T::Key: Borrow<Q>,
-    {
-        let key = hash(key);
-        self.0.get(&key)
-    }
-}
-
 impl<T> DualHashSet<T>
 where
     T: Dual,
@@ -77,8 +69,7 @@ where
 {
     /// Insert a value into the set
     pub fn insert(&mut self, value: T) -> Option<T> {
-        let key = hash(value.key());
-        self.0.insert(key, value)
+        self.0.insert(value.key().clone(), value)
     }
     /// Modify a value in the set.
     /// If the key changes, the value will be moved to the new key.
@@ -88,12 +79,12 @@ where
         T::Key: Borrow<Q>,
         F: FnMut(&mut T) -> R,
     {
-        let key = hash(key);
-        if let Some(value) = self.0.get_mut(&key) {
+        if let Some(value) = self.0.get_mut(key) {
             let res = f(value);
-            let new_key = hash(value.key());
-            if new_key != key {
-                let value = self.0.remove(&key).unwrap();
+            let new_key = value.key();
+            if new_key.borrow() != key {
+                let new_key = new_key.clone();
+                let value = self.0.remove(key).unwrap();
                 self.0.insert(new_key, value);
             }
             Some(res)
@@ -116,9 +107,9 @@ where
     }
 }
 
-pub struct Keys<'a, T>(hash_map::Values<'a, u64, T>);
-pub struct Iter<'a, T>(hash_map::Values<'a, u64, T>);
-pub struct IntoIter<T>(hash_map::IntoValues<u64, T>);
+pub struct Keys<'a, T: Dual>(hash_map::Values<'a, T::Key, T>);
+pub struct Iter<'a, T: Dual>(hash_map::Values<'a, T::Key, T>);
+pub struct IntoIter<T: Dual>(hash_map::IntoValues<T::Key, T>);
 
 impl<'a, T: Dual> Iterator for Keys<'a, T> {
     type Item = &'a T::Key;
@@ -127,21 +118,21 @@ impl<'a, T: Dual> Iterator for Keys<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T: Dual> Iterator for Iter<'a, T> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
     }
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<T: Dual> Iterator for IntoIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
     }
 }
 
-impl<T> IntoIterator for DualHashSet<T> {
+impl<T: Dual> IntoIterator for DualHashSet<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
     fn into_iter(self) -> Self::IntoIter {
@@ -149,18 +140,12 @@ impl<T> IntoIterator for DualHashSet<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a DualHashSet<T> {
+impl<'a, T: Dual> IntoIterator for &'a DualHashSet<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         Iter(self.0.values())
     }
-}
-
-fn hash<T: Hash + ?Sized>(t: &T) -> u64 {
-    let mut hasher = hash_map::DefaultHasher::new();
-    t.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[cfg(test)]

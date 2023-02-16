@@ -4,4 +4,3 @@ name = 'dualset'
 version = '0.1.0'
 
 [dependencies]
-nohash-hasher = '0.2.0'
